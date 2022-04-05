@@ -9,10 +9,25 @@
 ; Architecture:  x86-64
 ; Language:      NASM Assembly Language
 ;
-; Authors:
+; Authors:       David Felder, Florian Herkommer, Florian Glaser
 ;
 ;----------------------------------------------------------------------------
 
+;-----------------------------------------------------------------------------
+; Section BSS
+;-----------------------------------------------------------------------------
+SECTION .bss
+
+; tv_sec sind 8 Bytes
+; tv_usec sind 8 Bytes
+; => 16 Byte pro timeval
+
+; => 16 Byte * 10.000 Stück = 160.000 Byte
+; => 8 Byte RESQ * 20.000 = 160.000 Byte
+list    resq 20000
+
+; Maximal 10.000 Stück -> 16 Bit (reichen theoretisch 14 Bit - gibts nicht)
+counter resw 1
 
 ;-----------------------------------------------------------------------------
 ; SECTION TEXT
@@ -28,7 +43,7 @@ list_init:
         push    rbp
         mov     rbp,rsp
 
-        ; your code goes here
+        mov     word [counter], 0       ; Inital counter set to 0
 
         mov     rsp,rbp
         pop     rbp
@@ -42,7 +57,7 @@ list_size:
         push    rbp
         mov     rbp,rsp
 
-        ; your code goes here
+        movzx   rax, word [counter]
 
         mov     rsp,rbp
         pop     rbp
