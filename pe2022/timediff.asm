@@ -11,7 +11,7 @@
 ; Architecture:  x86-64
 ; Language:      NASM Assembly Language
 ;
-; Authors:
+; Authors:       David Felder, Florian Herkommer, Florian Glaser
 ;
 ;----------------------------------------------------------------------------
 
