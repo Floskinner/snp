@@ -91,16 +91,16 @@ list_add:
         ; *tv = tv_sec (lenght 8 Byte)
         ; *tv + 8 Byte = tv_usec (length 8 Byte)
 
-        mov     r10d, [rdi]             ; *rdi = r10d (tv_sec)
-        mov     r11d, [rdi+8]           ; *rdi + 8 Byte = r11d (tv_usec)
+        mov     r10, [rdi]             ; r10 = *rdi (tv_sec)
+        mov     r11, [rdi+0x8]           ; r11 = *rdi + 8 Byte (tv_usec)
 
-        movzx   rcx, word [counter]     ; get counter value in cx
-        shl     rcx, 4                  ; cx * 16 Bytes == cx << 4
+        movzx   rcx, word [counter]     ; get counter value in rcx
+        shl     rcx, 4                  ; rcx * 16 Bytes == rcx << 4
 
         add     rcx, list               ; addr + offset (counter * 16 Byte)
 
-        mov    [rcx], r10d              ; tv_sec in list[counter*16]
-        mov    [rcx + 8], r11d          ; tv_usec in list[counter*16+8]
+        mov    [rcx], r10              ; tv_sec in list[counter*16]
+        mov    [rcx + 0x8], r11          ; tv_usec in list[counter*16+8]
 
         movzx   rax, word [counter]     ; Return index of the added timestamp
         add     word [counter], 1       ; Add 1 to the counter of added timestamps
@@ -133,8 +133,31 @@ list_get:
         push    rbp
         mov     rbp,rsp
 
-        ; your code goes here
+        ; *tv ist in rdi
+        ; idx in rsi
 
+        xor     rax,rax         ; return false on failure
+
+        cmp     word [counter],0     ; check if counter == 0
+        je      return_get      ; return false
+
+        cmp     si, word [counter]  ; check if index >= counter
+        jge     return_get      ; return false
+        
+        mov     rcx, rsi        ; get counter value in rcx
+        shl     rcx, 4          ; rcx * 16 Bytes == rcx << 4
+
+        add     rcx, list       ; addr + offset (counter * 16 Byte)
+        mov     r10, [rcx]      ; r10 = tv_sec
+        mov     [rdi], r10      ; rdi = r10 (tv_sec)
+
+        xor     r10,r10                 ; clear r10
+        mov     r10, [rcx + 0x8]        ; r10 = tv_usec
+        mov     [rdi + 0x8], r10        ; rdi+0x8 = r10 (tv_usec)
+
+        add     rax,1           ; return true on success
+
+return_get:
         mov     rsp,rbp
         pop     rbp
         ret
