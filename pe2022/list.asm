@@ -87,7 +87,23 @@ list_add:
         push    rbp
         mov     rbp,rsp
 
-        ; your code goes here
+        ; *tv ist in rdi
+        ; *tv = tv_sec (lenght 8 Byte)
+        ; *tv + 8 Byte = tv_usec (length 8 Byte)
+
+        mov     r10d, [rdi]             ; *rdi = r10d (tv_sec)
+        mov     r11d, [rdi+8]           ; *rdi + 8 Byte = r11d (tv_usec)
+
+        movzx   rcx, word [counter]     ; get counter value in cx
+        shl     rcx, 4                  ; cx * 16 Bytes == cx << 4
+
+        add     rcx, list               ; addr + offset (counter * 16 Byte)
+
+        mov    [rcx], r10d              ; tv_sec in list[counter*16]
+        mov    [rcx + 8], r11d          ; tv_usec in list[counter*16+8]
+
+        movzx   rax, word [counter]     ; Return index of the added timestamp
+        add     word [counter], 1       ; Add 1 to the counter of added timestamps
 
         mov     rsp,rbp
         pop     rbp
