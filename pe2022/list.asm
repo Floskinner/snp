@@ -210,33 +210,56 @@ list_find:
         mov     rax, 0xffffffff         ; return -1 on failure
 
         cmp     word [counter],0        ; check if counter == 0
-        je      return_find             ; return -1
+        je      return_find             ; return -1 -> object not found
 
-        xor     r10, r10                ; r10 = 0
+        xor     r10, r10                ; r10 is the left edge index = 0
         movzx   r11, word [counter]     ; save counter to r11
-        sub     r11, 1                  ; r11 = counter -1
+        sub     r11, 1                  ; r11 is the right edge index = counter -1
 
 loop_start_find:
-        mov     rcx, r11        ; rcx = r11
-        sub     rcx, r10        ; rcx = r11 - r10
-        shr     rcx, 1          ; rcx = ( r11 - r10 ) / 2
-        add     rcx, r10        ; rcx = ( r11 - r10 ) / 2 + r10
+        mov     rcx, r11                ; rcx = r11
+        sub     rcx, r10                ; rcx = r11 - r10
+        shr     rcx, 1                  ; rcx = ( r11 - r10 ) / 2
+        add     rcx, r10                ; rcx is the middle element index of the search field = ( r11 - r10 ) / 2 + r10
+        shl     rcx, 4                  ; set rcx from index to offset ( rcx * 16 Bytes )
 
-        shl     rcx, 4
-        mov     rdx, [list + rcx]
-
-        cmp     rdx, [rdi]      ; if rcx & rdi
-        je      equal_seconds
+        mov     rdx, [list + rcx]       ; find timeval sec at offset rcx in list
+        cmp     rdx, [rdi]              ; compare sec of rdx & *tv
+        je      equal_seconds           ; rdx == *tv
+        jg      binary_search_lower     ; rdx > *tv
+        jl      binary_search_greater   ; rdx < *tv
 
 equal_seconds:
-        mov     rdx, [list + rcx]
+        mov     rdx, [list + rcx + 0x8] ; find timeval usec at offset rcx in list
+        cmp     rdx, [rdi + 0x8]        ; compare usec of rdx & *tv
+        je      return_find_success     ; rdx == *tv
+        jg      binary_search_lower     ; rdx > *tv
+        jl      binary_search_greater   ; rdx < *tv
 
-        cmp     rdx, [rdi]      ; if rcx & rdi
-        je      return_find_success
+binary_search_lower:
+        cmp     rcx, 0                  ; check if rcx == 0
+        je      return_find             ; return -1 -> object not found
+
+        shr     rcx, 4                  ; set rcx from offset to index ( rcx / 16 Bytes )
+        sub     rcx, 1                  ; rcx is the new right edge index
+        mov     r11, rcx                ; set r11 the new right edge index
+
+        cmp     r10, r11                ; compare right and left edge index
+        jle     loop_start_find         ; loop if checkable timeval is available
+        jg      return_find             ; return -1 -> object not found
+
+binary_search_greater:
+        shr     rcx, 4                  ; set rcx from offset to index ( rcx / 16 Bytes )
+        add     rcx, 1                  ; rcx is the new left edge index
+        mov     r10, rcx                ; set r10 the new left edge index
+
+        cmp     r10, r11                ; compare right and left edge index
+        jle     loop_start_find         ; loop if checkable timeval is available
+        jg      return_find             ; return -1 -> object not found
 
 return_find_success:
-        shr     rcx, 4
-        mov     rax, rcx
+        shr     rcx, 4                  ; set rcx from offset to index ( rcx / 16 Bytes )
+        mov     rax, rcx                ; return the index value
 
 return_find:
         mov     rsp,rbp
