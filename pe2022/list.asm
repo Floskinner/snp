@@ -79,6 +79,7 @@ list_is_sorted:
         je      return_sorted           ; return false
 
         movzx   rdx, word [counter]     ; save counter to rdx
+        sub     rdx, 1                  ; rdx = counter - 1
         shl     rdx, 4                  ; counter * 16 -> max physical address
 
 loop_start_sorted:
@@ -132,7 +133,7 @@ check_usec:
         cmp     r10, r11                ; if links & rechts...
         jg      return_sorted           ; links > rechts => false
 
-        jp      callback_from_check_usec       ; return to loop
+        jmp      callback_from_check_usec       ; return to loop
 
 
 return_sorted_true:
