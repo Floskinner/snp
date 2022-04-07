@@ -85,7 +85,7 @@ next_sec_char:
         xor     r8, r8                          ; clear r8
         lea     r8d, [rdx-'.']                  ; number saved in r8d
         cmp     r8b, 0                          ; check whether character is '.'
-        je      convert_to_complete_number      ; yes, then read usec
+        je      convert_sec_to_complete_number      ; yes, then read usec
 
 ;        char to number
         lea     r8d, [rdx-'0']  ; number saved in r8d
@@ -145,73 +145,6 @@ read_usec:
         cmp     dl,CHR_LF       ; check for end-of-string
         je      next_string     ; no, process next sec char in buffer
         ; check counter < 6 -> ja: next_usec, nein: next_string
-
-
-
-
-        movzx   edx,byte [rsi]  ; load next character from buffer
-
-        xor     r8, r8                          ; clear r8
-        lea     r8d, [rdx-'.']                  ; number saved in r8d
-        cmp     r8b, 0                          ; check whether character is '.'
-        je      convert_to_complete_number      ; yes, then read usec
-
-;        char to number
-        lea     r8d, [rdx-'0']  ; number saved in r8d
-        cmp     r8b, ('9'-'0')  ; check whether character is a number
-        ja      not_number      ; no, then end programm
-
-;        save number in r13b
-        shl     r13, 4
-        xor     r13b, r8b
-        inc     rcx             ; increment counter
-
-        inc     rsi             ; increment pointer to next char in string
-        jmp     next_sec_char   ; jump back to read next char
-
-convert_usec_to_complete_number:
-        inc     rsi                     ; increment pointer to next char in string
-        mov     qword [sec_buffer], 0   ; clear sec_buffer
-        xor     r10, r10                ; clear r10
-        inc     r10                     ; use r10 as factor
-convert_next_usec_number:
-        xor     rdx, rdx        ; clear rdx
-        mov     dl, 0xF         ; setup rdx for the AND
-        AND     rdx, r13        ; get lowest 4 Bit from rdx
-        shr     r13, 4
-        
-        ; start number (rdx) * factor (r10)
-        push    rax             ; save rax for mul
-        mov     rax, rdx        ; move rdx to rax for mul
-        mul     r10             ; rax * 10 = edx & eax
-        shl     rdx, 32         ; to higher 32 Bit of r10
-        mov     edx, eax        ; move eax to lower 32 Bit of rdx
-        pop     rax             ; restore rax
-        ; end number (rdx) * factor (r10)
-
-        mov     r11, sec_buffer
-        add     qword [r11], rdx ; add number * factor to sec_buffer
-
-        ; start calculate factor
-        push    rax             ; save rax for mul
-        mov     rax, r10        ; move r10 to rax for mul
-        mov     r12d, 0xA       ; move factor 10 to r12
-        mul     r12d            ; rax * 10 = edx & eax
-        xor     r10, r10        ; clear r10
-        mov     r10d, edx       ; move edx...
-        shl     r10, 32         ; to higher 32 Bit of r10
-        mov     r10d, eax       ; move eax to lower 32 Bit of r10
-        pop     rax             ; restore rax
-        ; end calculate factor
-
-        dec     rcx             ; decrement counter
-        test    rcx, rcx
-        jg      convert_next_number
-        ; if finished continue with read_usec
-
-
-
-
 
 not_number:
         nop
