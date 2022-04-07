@@ -240,12 +240,34 @@ convert_next_usec_number:
 read_finished:
         nop
 
-; 1. Chcken ob liste sortiert ist
+; 1. Checken ob Liste sortiert ist -> ansonsten fehler
+; 2. Berechnen der Timediff und Ausgabe
+    ; foreach timeval in list
+        ; "=======" ausgeben
+        ; Zahl in ascii convertieren (darauf achten zahlen auszufüllen mit 0er)
+        ; die convertierten zeichen in buffer schreiben
+        ; buffer ausgeben
+        ; timediff berechnen 
+        ; umwandeln in ascii
+        ; ascii in buffer
+        ; buffer ausgeben
+        ; und von vorne
+;
+;Beispiel
+;sec = d0012345678
+;umwandeln in ascii
+;
+;ganze 10 mal
+;
+;sec = (EDX & EAX) / 10 = Ganzzahl (EAX) and Rest (EDX)
+;neues sec = EAX
+;hier umwandlung von EDX in ascii
+;in buffer schreiben - Achtung wir lesen von 1er nach 1milliarder 
+;
+;und von vorne
+;
 
-
-        pop     r13             ; restore r13
-        pop     r12             ; restore r12
-
+; =======
 
 ; 1.5                   = 0000000001.500000
 ; 1000000000.0
@@ -261,6 +283,10 @@ read_finished:
 
 not_number:
         nop
+
+; Need to restore regestries
+pop     r13             ; restore r13
+pop     r12             ; restore r12
 
         ;-----------------------------------------------------------
         ; call system exit and return to operating system / shell
