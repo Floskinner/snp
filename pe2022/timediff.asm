@@ -269,11 +269,11 @@ read_finished:
         xor     r13, r13                ; clear counter
 
 ; 1. Checken ob Liste sortiert ist -> ansonsten fehler
-; r12 = list_size: always the size of the list
+; r12 = index: index of the current timestamp
 ; r13 = counter: size of the list and used to leave the loop then all timestamps are printed
         call    list_size
-        mov     r12, rax                ; get size of list
-        mov     r13, r12                ; get size of list to count
+        mov     r13, rax                ; get size of list
+        mov     r12, 0                  ; get size of list to count
         cmp     r13, 1                  ; check if list size <= 1
         jle     exit_failure
 
@@ -354,8 +354,7 @@ setup_first_timveal_usec:
 calc_and_print_next:
 ;       get list[i] timeval
         mov     rdi, timeval_buffer
-        mov     rsi, r12
-        sub     rsi, r13        ; size of list - counter
+        mov     rsi, r12        ; r12 = index
         call    list_get
 
         test    rax, rax        ; test if get was successfull
@@ -363,9 +362,8 @@ calc_and_print_next:
 
 ;       get list[i+1] timeval
         mov     rdi, calc_buffer_timeval
-        mov     rsi, r12
-        sub     rsi, r13        ; size of list - counter
-        add     rsi, 1
+        mov     rsi, r12        ; r12 = index
+        add     rsi, 1          ; r12 + 1 = index + 1
         call    list_get
 
         test    rax, rax        ; test if get was successfull
@@ -430,9 +428,10 @@ setup_timveal_sec:
         cmp     cl, 8                           ; stop then the start of sec is reached in the string
         jg      setup_timveal_sec
 
-        ; get list[0] for usec
+        ; get list[index + 1] for usec
         mov     rdi, calc_buffer_timeval
-        mov     rsi, 0
+        mov     rsi, r12
+        inc     rsi
         call    list_get
 
         xor     rcx, rcx          ; clear counter
@@ -457,8 +456,9 @@ setup_timveal_usec:
         
         SYSCALL_4 SYS_WRITE, FD_STDOUT, out_str, out_str_len
 
-        dec     r13
-        cmp     r13,1
+        inc     r12             ; index++
+        dec     r13             ; loop counter--
+        cmp     r13,1           ; check if loop counter > 1
         jg      calc_and_print_next
 
 ; 1000000000.000000
