@@ -64,10 +64,11 @@ calc_buffer_useconds    resb MAX_USECOND_SIZE
 ;-----------------------------------------------------------------------------
 SECTION .data
 
-out_str:
-timestamp:      db "__________.______"
+out_timestr:    db "__________.______"
                 db CHR_LF
-                db "======="
+out_timestr_len equ $-out_timestr
+
+out_str:        db "======="
                 db CHR_LF
 next_timestamp: db "__________.______"
                 db CHR_LF
@@ -265,22 +266,94 @@ convert_next_usec_number:
 
 read_finished:
         nop
-        xor     rcx, rcx                ; clear counter
+        xor     r13, r13                ; clear counter
 
 ; 1. Checken ob Liste sortiert ist -> ansonsten fehler
         call    list_size
-        mov     rcx, rax                ; get size of the list
-        cmp     rcx, 1                  ; check if list size <= 1
+        mov     r12, rax                ; get size of list
+        mov     r13, r12                ; get size of list to count
+        cmp     r13, 1                  ; check if list size <= 1
         jle     exit_failure
 
         call    list_is_sorted          ; check if list is sorted
         test    rax, rax
         jz      not_sorted              ; print error and exit if not
 
-loop_start:
-;       get list[i] timeval
+; hier 1. Timestamp ausgeben
+;Beispiel
+;sec = d0012345678
+;umwandeln in ascii
+;
+;ganze 10 mal
+;
+;sec = (EDX & EAX) / 10 = Ganzzahl (EAX) and Rest (EDX)
+;neues sec = EAX
+;hier umwandlung von EDX in ascii
+;in buffer schreiben - Achtung wir lesen von 1er nach 1milliarder 
+;
+;und von vorne
+
+;       get list[0] timeval
         mov     rdi, timeval_buffer
         mov     rsi, 0
+        call    list_get
+
+        test    rax, rax        ; test if get was successfull
+        jz      exit_failure
+        
+        xor     rcx, rcx          ; clear counter
+        xor     rax, rax          ; clear for div
+        mov     rcx, 10           ; counter = 10
+
+setup_first_timveal_sec:
+        ; convert sec to ASCII
+        mov     edx, dword [timeval_buffer+4]
+        mov     eax, dword [timeval_buffer]
+        mov     r11, 10
+        div     r11d                            ; seconds / 10 = seconds and remainder 
+        add     rdx, '0'                        ; convert remainder to ASCII
+        lea     r11, [out_timestr+rcx-1]
+        mov     byte [r11], dl                  ; write char to output string
+
+        mov     qword [timeval_buffer], rax
+        
+        dec     cl
+        cmp     cl, 0
+        jg      setup_first_timveal_sec
+
+        ; get list[0] for usec
+        mov     rdi, timeval_buffer
+        mov     rsi, 0
+        call    list_get
+
+        xor     rcx, rcx          ; clear counter
+        xor     rax, rax          ; clear for div
+        mov     rcx, 17           ; counter = 6
+        
+setup_first_timveal_usec:
+        mov     edx, dword [timeval_buffer+12]
+        mov     eax, dword [timeval_buffer+8]
+        mov     r11, 10
+        div     r11d                            ; seconds / 10 = seconds and remainder 
+        add     rdx, '0'                        ; convert remainder to ASCII
+        lea     r11, [out_timestr+rcx-1]
+        mov     byte [r11], dl                  ; write char to output string
+
+        mov     qword [timeval_buffer+8], rax
+        
+        dec     cl
+        cmp     cl, 11
+        jg      setup_first_timveal_usec
+
+        
+        SYSCALL_4 SYS_WRITE, FD_STDOUT, out_timestr, out_timestr_len
+        
+
+calc_and_print_next:
+;       get list[i] timeval
+        mov     rdi, timeval_buffer
+        mov     rsi, r12
+        sub     rsi, r13
         call    list_get
 
         test    rax, rax        ; test if get was successfull
@@ -288,7 +361,9 @@ loop_start:
 
 ;       get list[i+1] timeval
         mov     rdi, calc_buffer_timeval
-        mov     rsi, 1
+        mov     rsi, r12
+        sub     rsi, r13
+        add     rsi, 1
         call    list_get
 
         test    rax, rax        ; test if get was successfull
@@ -297,7 +372,7 @@ loop_start:
         ; calculate usec diff
         mov     r10, qword [calc_buffer_timeval+8]
         sub     r10, qword [timeval_buffer+8]           ; list[i+1] - list[i]
-        mov     qword [usec_buffer], r10
+        mov     qword [calc_buffer_useconds], r10
         
         ; calculate sec diff
         mov     r10, qword [calc_buffer_timeval]
@@ -329,6 +404,12 @@ loop_start:
         div     r11d            ; EDX & EAX / r11 = EAX and EDX
         mov     byte [calc_buffer_hours], dl
         mov     dword [calc_buffer_days], eax     ; quotient - left d
+
+        ; TODO ausgabe hier
+
+        dec     r13
+        cmp     r13,1
+        jg      calc_and_print_next
 
 ; 1000000000.000000
 ; 1234567890.000000
