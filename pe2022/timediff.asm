@@ -269,6 +269,8 @@ read_finished:
         xor     r13, r13                ; clear counter
 
 ; 1. Checken ob Liste sortiert ist -> ansonsten fehler
+; r12 = list_size: always the size of the list
+; r13 = counter: size of the list and used to leave the loop then all timestamps are printed
         call    list_size
         mov     r12, rax                ; get size of list
         mov     r13, r12                ; get size of list to count
@@ -303,7 +305,7 @@ read_finished:
         
         xor     rcx, rcx          ; clear counter
         xor     rax, rax          ; clear for div
-        mov     rcx, 10           ; counter = 10
+        mov     rcx, 10           ; counter = 10 -> last position for sec
 
 setup_first_timveal_sec:
         ; convert sec to ASCII
@@ -328,7 +330,7 @@ setup_first_timveal_sec:
 
         xor     rcx, rcx          ; clear counter
         xor     rax, rax          ; clear for div
-        mov     rcx, 17           ; counter = 6
+        mov     rcx, 17           ; counter = 17 -> last position for sec
         
 setup_first_timveal_usec:
         mov     edx, dword [timeval_buffer+12]
@@ -342,7 +344,7 @@ setup_first_timveal_usec:
         mov     qword [timeval_buffer+8], rax
         
         dec     cl
-        cmp     cl, 11
+        cmp     cl, 11                          ; stop then the dot is reached in the string
         jg      setup_first_timveal_usec
 
         
@@ -353,7 +355,7 @@ calc_and_print_next:
 ;       get list[i] timeval
         mov     rdi, timeval_buffer
         mov     rsi, r12
-        sub     rsi, r13
+        sub     rsi, r13        ; size of list - counter
         call    list_get
 
         test    rax, rax        ; test if get was successfull
@@ -362,7 +364,7 @@ calc_and_print_next:
 ;       get list[i+1] timeval
         mov     rdi, calc_buffer_timeval
         mov     rsi, r12
-        sub     rsi, r13
+        sub     rsi, r13        ; size of list - counter
         add     rsi, 1
         call    list_get
 
@@ -406,6 +408,54 @@ calc_and_print_next:
         mov     dword [calc_buffer_days], eax     ; quotient - left d
 
         ; TODO ausgabe hier
+        ; timestamp vorbereiten
+        
+        xor     rcx, rcx          ; clear counter
+        xor     rax, rax          ; clear for div
+        mov     rcx, 18           ; counter = 18 -> last position for sec
+
+setup_timveal_sec:
+        ; convert sec to ASCII
+        mov     edx, dword [calc_buffer_timeval+4]
+        mov     eax, dword [calc_buffer_timeval]
+        mov     r11, 10
+        div     r11d                            ; seconds / 10 = seconds and remainder 
+        add     rdx, '0'                        ; convert remainder to ASCII
+        lea     r11, [out_str+rcx-1]
+        mov     byte [r11], dl                  ; write char to output string
+
+        mov     qword [calc_buffer_timeval], rax
+        
+        dec     cl
+        cmp     cl, 8                           ; stop then the start of sec is reached in the string
+        jg      setup_timveal_sec
+
+        ; get list[0] for usec
+        mov     rdi, calc_buffer_timeval
+        mov     rsi, 0
+        call    list_get
+
+        xor     rcx, rcx          ; clear counter
+        xor     rax, rax          ; clear for div
+        mov     rcx, 25           ; counter = 25 -> last position for the usec
+        
+setup_timveal_usec:
+        mov     edx, dword [calc_buffer_timeval+12]
+        mov     eax, dword [calc_buffer_timeval+8]
+        mov     r11, 10
+        div     r11d                            ; seconds / 10 = seconds and remainder 
+        add     rdx, '0'                        ; convert remainder to ASCII
+        lea     r11, [out_str+rcx-1]
+        mov     byte [r11], dl                  ; write char to output string
+
+        mov     qword [calc_buffer_timeval+8], rax
+        
+        dec     cl
+        cmp     cl, 19                          ; stop then the dot is reached in the string
+        jg      setup_timveal_usec
+
+        
+        SYSCALL_4 SYS_WRITE, FD_STDOUT, out_str, out_str_len
 
         dec     r13
         cmp     r13,1
