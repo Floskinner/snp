@@ -78,6 +78,9 @@ list_is_sorted:
         cmp     word [counter],0        ; check if counter == 0
         je      return_sorted           ; return false
 
+        cmp     word [counter],1        ; check if counter == 1
+        je      return_sorted_true      ; return true
+
         movzx   rdx, word [counter]     ; save counter to rdx
         sub     rdx, 1                  ; rdx = counter - 1
         shl     rdx, 4                  ; counter * 16 -> max physical address
@@ -121,7 +124,7 @@ callback_from_check_usec:
         cmp     rcx, rdx                ; if index >= counter * 16
         jge     return_sorted_true      ; list is sorted => return true
 
-        jmp      loop_start_sorted      ; go to loop start
+        jmp     loop_start_sorted       ; go to loop start
 
 check_usec:
         xor     r10, r10

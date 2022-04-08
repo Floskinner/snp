@@ -36,24 +36,49 @@ extern list_get
 %define SEC_SIZE              8 ; 8 Byte
 %define USEC_SIZE             8 ; 8 Byte
 
+%define MAX_DAY_SIZE          4 ; max 115.740 days -> 17 Bit -> min 3 Byte
+%define MAX_HOUR_SIZE         1 ; max 23 -> 5 Bit -> 1 Byte
+%define MAX_MINUTE_SIZE       1 ; max 59 -> 6 Bit -> 1 Byte
+%define MAX_SECOND_SIZE       1 ; max 59 -> 6 Bit -> 1 Byte
+%define MAX_USECOND_SIZE      4 ; max 999999 -> 20 Bit -> min 3 Byte
+
 ;-----------------------------------------------------------------------------
 ; Section BSS
 ;-----------------------------------------------------------------------------
 SECTION .bss
 
-input_buffer    resb BUFFER_SIZE
-timeval_buffer  resb TIMEVAL_SIZE
-sec_buffer      resb SEC_SIZE
-usec_buffer     resb USEC_SIZE
+input_buffer            resb BUFFER_SIZE
+timeval_buffer          resb TIMEVAL_SIZE
+sec_buffer              resb SEC_SIZE
+usec_buffer             resb USEC_SIZE
 
+calc_buffer_timeval     resb TIMEVAL_SIZE
+calc_buffer_days        resb MAX_DAY_SIZE
+calc_buffer_hours       resb MAX_HOUR_SIZE
+calc_buffer_minutes     resb MAX_MINUTE_SIZE
+calc_buffer_seconds     resb MAX_SECOND_SIZE
+calc_buffer_useconds    resb MAX_USECOND_SIZE
 
 ;-----------------------------------------------------------------------------
 ; Section DATA
 ;-----------------------------------------------------------------------------
 SECTION .data
 
-error_str:
+out_str:
+timestamp:      db "__________.______"
+                db CHR_LF
+                db "======="
+                db CHR_LF
+next_timestamp: db "__________.______"
+                db CHR_LF
+timediff:       times 28 db ""
+                db CHR_LF
+out_str_len equ $-out_str
+
+not_number_error_str:
         db "Dies ist kein gueltiger Timestamp!", CHR_LF
+not_sorted_error_str:
+        db "Die Timestamps sind nicht aufsteigend sortiert!", CHR_LF
 
 ;-----------------------------------------------------------------------------
 ; SECTION TEXT
@@ -80,6 +105,9 @@ next_string:
         jz      read_finished   ; jump to loop exit if end of input is
                                 ; reached, i.e. no characters have been
                                 ; read (rax == 0)
+
+        cmp     byte [rsi], CHR_LF
+        je      read_finished
 
         ; rsi: pointer to current character in input_buffer
         lea     rsi,[input_buffer]    ; load pointer to character buffer
@@ -145,16 +173,11 @@ convert_next_sec_number:
 
         dec     rcx             ; decrement counter
         test    rcx, rcx
-        jg      convert_next_sec_number
+        jnz     convert_next_sec_number
         ; if finished continue with read_usec
 
 read_usec:
-        xor     rcx, rcx        ; reset counter
-        cmp     dl,CHR_LF       ; check for end-of-string
-        je      next_string     ; no, process next sec char in buffer
-        ; check counter < 6 -> ja: next_usec, nein: next_string
-
-        
+        xor     rcx, rcx        ; reset counter       
 
 next_usec_char:
         movzx   edx,byte [rsi]  ; load next character from buffer
@@ -162,6 +185,9 @@ next_usec_char:
         xor     r8, r8                          ; clear r8
         lea     r8d, [rdx-CHR_LF]               ; save 0 to r8 if char is line feed
         cmp     r8b, 0                          ; check whether character is '.'
+        je      convert_usec_to_complete_number ; yes, then convert to complete number
+
+        cmp     rdx, 0                          ; check ASCII NUL - End of stream
         je      convert_usec_to_complete_number ; yes, then convert to complete number
 
         cmp     rcx, 0x6                        ; check whether 6 digits are read
@@ -239,8 +265,73 @@ convert_next_usec_number:
 
 read_finished:
         nop
+        xor     rcx, rcx                ; clear counter
 
 ; 1. Checken ob Liste sortiert ist -> ansonsten fehler
+        call    list_size
+        mov     rcx, rax                ; get size of the list
+        cmp     rcx, 1                  ; check if list size <= 1
+        jle     exit_failure
+
+        call    list_is_sorted          ; check if list is sorted
+        test    rax, rax
+        jz      not_sorted              ; print error and exit if not
+
+loop_start:
+;       get list[i] timeval
+        mov     rdi, timeval_buffer
+        mov     rsi, 0
+        call    list_get
+
+        test    rax, rax        ; test if get was successfull
+        jz      exit_failure
+
+;       get list[i+1] timeval
+        mov     rdi, calc_buffer_timeval
+        mov     rsi, 1
+        call    list_get
+
+        test    rax, rax        ; test if get was successfull
+        jz      exit_failure
+
+        ; calculate usec diff
+        mov     r10, qword [calc_buffer_timeval+8]
+        sub     r10, qword [timeval_buffer+8]           ; list[i+1] - list[i]
+        mov     qword [usec_buffer], r10
+        
+        ; calculate sec diff
+        mov     r10, qword [calc_buffer_timeval]
+        sbb     r10, qword [timeval_buffer]             ; list[i+1] - list[i]
+
+        ; calculate min from sec
+        mov     eax, r10d
+        shr     r10, 32
+        mov     edx, r10d
+        mov     r11, 60
+        div     r11d            ; EDX & EAX / r11 = EAX and EDX
+        mov     byte [calc_buffer_seconds], dl
+        mov     r10, rax         ; quotient - left min
+
+        ; calculate hr from min
+        mov     eax, r10d
+        shr     r10, 32
+        mov     edx, r10d
+        mov     r11, 60
+        div     r11d            ; EDX & EAX / r11 = EAX and EDX
+        mov     byte [calc_buffer_minutes], dl
+        mov     r10, rax         ; quotient - left min
+
+        ; calculate d from hr
+        mov     eax, r10d
+        shr     r10, 32
+        mov     edx, r10d
+        mov     r11, 24
+        div     r11d            ; EDX & EAX / r11 = EAX and EDX
+        mov     byte [calc_buffer_hours], dl
+        mov     dword [calc_buffer_days], eax     ; quotient - left d
+
+; 1000000000.000000
+; 1234567890.000000
 ; 2. Berechnen der Timediff und Ausgabe
     ; foreach timeval in list
         ; "=======" ausgeben
@@ -284,6 +375,9 @@ read_finished:
 not_number:
         nop
 
+not_sorted:
+        nop
+
 ; Need to restore regestries
 pop     r13             ; restore r13
 pop     r12             ; restore r12
@@ -295,3 +389,6 @@ pop     r12             ; restore r12
         ;-----------------------------------------------------------
         ; END OF PROGRAM
         ;-----------------------------------------------------------
+
+exit_failure:
+.exit:  SYSCALL_2 SYS_EXIT, -1
