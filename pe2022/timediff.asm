@@ -27,9 +27,11 @@ extern list_get
 ; CONSTANTS
 ;-----------------------------------------------------------------------------
 
-%define BUFFER_SIZE          18 ; 16 numbers + 1 dot + line feed(\n) = 18 chars
+%define BUFFER_SIZE      180001 ; 16 numbers + 1 dot + line feed(\n) = 18 chars
                                 ; 1 char = 1 Byte
                                 ; 18 chars = 18 Byte
+                                ; max 10.000 elements -> 180.000 Bytes
+                                ; 180.000 Bytes + 1 \0 = 180.001 Bytes
 %define CHR_LF               10 ; line feed (LF) character
 %define CHR_CR               13 ; carriage return (CR) character (only needed for Windows)
 %define TIMEVAL_SIZE         16 ; 8 Byte sec + 8 Byte usec
@@ -86,9 +88,12 @@ timediff:       times 28 db 0
 out_str_len equ $-out_str
 
 not_number_error_str:
-        db "Dies ist kein gueltiger Timestamp!", CHR_LF
+        db "Die Eingabe der Timestamps enthält einen Fehler!", CHR_LF
+not_number_error_str_len equ $-not_number_error_str
+
 not_sorted_error_str:
         db "Die Timestamps sind nicht aufsteigend sortiert!", CHR_LF
+not_sorted_error_str_len equ $-not_sorted_error_str
 
 ;-----------------------------------------------------------------------------
 ; SECTION TEXT
@@ -101,48 +106,47 @@ SECTION .text
         global _start:function  ; make label available to linker
 _start:
         nop
-        push    r12     ; save r12
-        push    r13     ; save r13
-        push    r14     ; save r14
-        push    r15     ; save r15
+        push    r12             ; save r12
+        push    r13             ; save r13
+        push    r14             ; save r14
+        push    r15             ; save r15
 
         call    list_init       ; init list for the timeval
+
+;-----------------------------------------------------------------------------
+; Start: Read input to buffer
+;-----------------------------------------------------------------------------
 
 next_string:
         ;-----------------------------------------------------------
         ; read string from standard input (usually keyboard)
         ;-----------------------------------------------------------
         SYSCALL_4 SYS_READ, FD_STDIN, input_buffer, BUFFER_SIZE
-        test    rax,rax         ; check system call return value
-        jz      read_finished   ; jump to loop exit if end of input is
-                                ; reached, i.e. no characters have been
-                                ; read (rax == 0)
-
-        cmp     byte [rsi], CHR_LF
-        je      read_finished
+        test    rax, rax                ; check system call return value
+        jz      exit.exit_failure       ; exit with error status code if string is empty
 
         ; rsi: pointer to current character in input_buffer
-        lea     rsi,[input_buffer]    ; load pointer to character buffer
+        lea     rsi, [input_buffer]     ; load pointer to character buffer
+        mov     byte [rsi+rax], 0        ; zero terminate string
 
-        xor     rcx, rcx        ; clear rcx
-        xor     r13, r13
+        xor     rcx, rcx                ; clear rcx
+        xor     r13, r13                ; clear r13
 
 next_sec_char:
-        movzx   edx,byte [rsi]  ; load next character from buffer
-
+        movzx   edx, byte [rsi]                 ; load next character from buffer to edx
         xor     r8, r8                          ; clear r8
-        lea     r8d, [rdx-'.']                  ; number saved in r8d
+        lea     r8d, [rdx-'.']                  ; number = rdx (ASCII) - '.' (ASCII) saved in r8d
         cmp     r8b, 0                          ; check whether character is '.'
-        je      convert_sec_to_complete_number  ; yes, then convert to complete number
+        je      convert_sec_to_complete_number  ; yes, then convert seconds to complete number
 
-;        char to number
-        lea     r8d, [rdx-'0']  ; number saved in r8d
+;       char to number
+        lea     r8d, [rdx-'0']  ; number = rdx (ASXII) - '0' (ASCII) saved in r8d
         cmp     r8b, ('9'-'0')  ; check whether character is a number
         ja      not_number      ; no, then end programm
 
-;        save number in r13b
-        shl     r13, 4
-        xor     r13b, r8b
+;       save number to r13b
+        shl     r13, 4          ; shift left to create space for the next number
+        xor     r13b, r8b       ; write the number to the lower 8 Bit of r13
         inc     rcx             ; increment counter
 
         inc     rsi             ; increment pointer to next char in string
@@ -169,7 +173,7 @@ convert_next_sec_number:
         ; end number (rdx) * factor (r10)
 
         mov     r11, sec_buffer
-        add     qword [r11], rdx ; add number * factor to sec_buffer
+        add     qword [r11], rdx        ; add number * factor to sec_buffer
 
         ; start calculate factor
         push    rax             ; save rax for mul
@@ -184,57 +188,58 @@ convert_next_sec_number:
         ; end calculate factor
 
         dec     rcx             ; decrement counter
-        test    rcx, rcx
+        test    rcx, rcx        ; if counter == 0 end loop
         jnz     convert_next_sec_number
         ; if finished continue with read_usec
 
 read_usec:
-        xor     rcx, rcx        ; reset counter       
+        xor     rcx, rcx        ; reset counter
 
 next_usec_char:
-        movzx   edx,byte [rsi]  ; load next character from buffer
+        movzx   edx, byte [rsi]  ; load next character from buffer
 
         xor     r8, r8                          ; clear r8
         lea     r8d, [rdx-CHR_LF]               ; save 0 to r8 if char is line feed
-        cmp     r8b, 0                          ; check whether character is '.'
+        cmp     r8b, 0                          ; check whether character is line feed
         je      convert_usec_to_complete_number ; yes, then convert to complete number
 
         cmp     rdx, 0                          ; check ASCII NUL - End of stream
         je      convert_usec_to_complete_number ; yes, then convert to complete number
 
         cmp     rcx, 0x6                        ; check whether 6 digits are read
-        jge     convert_usec_to_complete_number ; yes, then convert to complete number
+        jge     max_usec_length_reached         ; yes, then loop until line feed or end of stream
 
 ;       char to number
-        lea     r8d, [rdx-'0']  ; number saved in r8d
-        cmp     r8b, ('9'-'0')  ; check whether character is a number
-        ja      not_number      ; no, then end programm
+        lea     r8d, [rdx-'0']          ; number saved in r8d
+        cmp     r8b, ('9'-'0')          ; check whether character is a number
+        ja      not_number              ; no, then end programm
 
 ;       save number in r13b
-        shl     r13, 4
-        xor     r13b, r8b
+        shl     r13, 4          ; shift left to create space for the next number
+        xor     r13b, r8b       ; write the number to the lower 8 Bit of r13
         inc     rcx             ; increment counter
 
+max_usec_length_reached:
         inc     rsi             ; increment pointer to next char in string
         jmp     next_usec_char  ; jump back to read next char
 
 convert_usec_to_complete_number:
-        cmp     rcx, 0x6                ; check whether 6 digits are read
-        jge     six_digits_read         ; yes, then continue with converting
-        shl     r13, 4                  ; else, add a 0 digit
-        inc     rcx                     ; ...and increment counter rcx
-        jmp     convert_usec_to_complete_number ; loop the 6 digit checker
+        cmp     rcx, 0x6                        ; check whether 6 digits are read
+        jge     six_digits_read                 ; yes, then continue with converting
+        shl     r13, 4                          ; else, add a 0 digit
+        inc     rcx                             ; ...and increment counter rcx
+        jmp     convert_usec_to_complete_number ; loop and check if reading is finished
 
 six_digits_read:
         inc     rsi                     ; increment pointer to next char in string
         mov     qword [usec_buffer], 0  ; clear usec_buffer
         xor     r10, r10                ; clear r10
-        inc     r10                     ; use r10 as factor
+        inc     r10                     ; use r10 as factor with start value 1
 convert_next_usec_number:
         xor     rdx, rdx        ; clear rdx
         mov     dl, 0xF         ; setup rdx for the AND
         AND     rdx, r13        ; get lowest 4 Bit from rdx
-        shr     r13, 4
+        shr     r13, 4          ; shift right to access the next number
         
         ; start number (rdx) * factor (r10)
         push    rax             ; save rax for mul
@@ -271,22 +276,29 @@ convert_next_usec_number:
         mov     qword [timeval_buffer+8], r12
 
         mov     rdi, timeval_buffer             ; first argument of list_add need pointer to a timeval
-        call    list_add
-        jmp     next_string
+        call    list_add                        ; add timeval to the list
+
+        cmp     byte [rsi], 0                   ; check if end of stream is reached
+        jne     next_sec_char
         ; if finished continue with list_add(&timeval_buffer) and next_string
 
+;-----------------------------------------------------------------------------
+; End: Read input to buffer
+;-----------------------------------------------------------------------------
 read_finished:
-        nop
         xor     r13, r13                ; clear counter
 
-; 1. Checken ob Liste sortiert ist -> ansonsten fehler
+;-----------------------------------------------------------------------------
+; Start: Convert first timestamp to ASCII and print to the console
+;-----------------------------------------------------------------------------
+
 ; r12 = index: index of the current timestamp
 ; r13 = max loop interation: size of the list - 1
         call    list_size
         mov     r13, rax                ; get size of list
         mov     r12, 0                  ; index of the current timestamp
         cmp     r13, 1                  ; check if list size <= 1
-        jle     exit_failure
+        jle     exit.exit_failure       ; yes -> exit with error status code
 
         dec     r13                     ; dec list_size to exit the loop
 
@@ -294,27 +306,14 @@ read_finished:
         test    rax, rax
         jz      not_sorted              ; print error and exit if not
 
-; hier 1. Timestamp ausgeben
-;Beispiel
-;sec = d0012345678
-;umwandeln in ascii
-;
-;ganze 10 mal
-;
-;sec = (EDX & EAX) / 10 = Ganzzahl (EAX) and Rest (EDX)
-;neues sec = EAX
-;hier umwandlung von EDX in ascii
-;in buffer schreiben - Achtung wir lesen von 1er nach 1milliarder 
-;
-;und von vorne
-
+;       print first Timestamp
 ;       get list[0] timeval
         mov     rdi, timeval_buffer
         mov     rsi, 0
         call    list_get
 
-        test    rax, rax        ; test if get was successfull
-        jz      exit_failure
+        test    rax, rax                ; test if get was successfull
+        jz      exit.exit_failure
         
         xor     rcx, rcx          ; clear counter
         xor     rax, rax          ; clear for div
@@ -322,19 +321,19 @@ read_finished:
 
 setup_first_timveal_sec:
         ; convert sec to ASCII
-        mov     edx, dword [timeval_buffer+4]
+        mov     edx, dword [timeval_buffer+4]   ; setup div
         mov     eax, dword [timeval_buffer]
         mov     r11, 10
-        div     r11d                            ; seconds / 10 = seconds and remainder 
+        div     r11d                            ; seconds (edx & eax) / 10 (r11d) = seconds (eax) and remainder (edx) 
         add     rdx, '0'                        ; convert remainder to ASCII
-        lea     r11, [out_timestr+rcx-1]
+        lea     r11, [out_timestr+rcx-1]        ; write ASCII chars from end to start
         mov     byte [r11], dl                  ; write char to output string
 
-        mov     qword [timeval_buffer], rax
+        mov     qword [timeval_buffer], rax     ; set the new seconds for next interation
         
-        dec     cl
-        cmp     cl, 0
-        jg      setup_first_timveal_sec
+        dec     cl                              ; dec counter
+        cmp     cl, 0                           ; check if counter > 0
+        jg      setup_first_timveal_sec         ; yes -> still seconds to convert left
 
         ; get list[0] for usec
         mov     rdi, timeval_buffer
@@ -346,32 +345,40 @@ setup_first_timveal_sec:
         mov     rcx, 17           ; counter = 17 -> last position for sec
         
 setup_first_timveal_usec:
-        mov     edx, dword [timeval_buffer+12]
+        mov     edx, dword [timeval_buffer+12]  ; setup div
         mov     eax, dword [timeval_buffer+8]
         mov     r11, 10
-        div     r11d                            ; seconds / 10 = seconds and remainder 
+        div     r11d                            ; useconds (edx & eax) / 10 (r11d) = useconds (eax) and remainder (edx)
         add     rdx, '0'                        ; convert remainder to ASCII
-        lea     r11, [out_timestr+rcx-1]
+        lea     r11, [out_timestr+rcx-1]        ; write ASCII chars from end to start
         mov     byte [r11], dl                  ; write char to output string
 
-        mov     qword [timeval_buffer+8], rax
+        mov     qword [timeval_buffer+8], rax   ; set the new useconds for next interation
         
         dec     cl
-        cmp     cl, 11                          ; stop when the dot is reached in the string
+        cmp     cl, 11                          ; stop when the dot (position 11) is reached in the string
         jg      setup_first_timveal_usec
 
-        
+        ; print the first timestamp
         SYSCALL_4 SYS_WRITE, FD_STDOUT, out_timestr, out_timestr_len
-        
+;-----------------------------------------------------------------------------
+; End: Convert first timestamp to ASCII and print to the console
+;-----------------------------------------------------------------------------
 
+;-----------------------------------------------------------------------------
+; Start: calculate all the timediffs for the next timestamp and print the results
+;-----------------------------------------------------------------------------
 calc_and_print_next:
+;-----------------------------
+; Start: calculation
+;-----------------------------
 ;       get list[i] timeval
         mov     rdi, timeval_buffer
         mov     rsi, r12        ; r12 = index
         call    list_get
 
         test    rax, rax        ; test if get was successfull
-        jz      exit_failure
+        jz      exit.exit_failure
 
 ;       get list[i+1] timeval
         mov     rdi, calc_buffer_timeval
@@ -380,12 +387,12 @@ calc_and_print_next:
         call    list_get
 
         test    rax, rax        ; test if get was successfull
-        jz      exit_failure
+        jz      exit.exit_failure
 
         ; calculate usec diff
         mov     r10, qword [calc_buffer_timeval+8]
         sub     r10, qword [timeval_buffer+8]           ; list[i+1] - list[i]
-        mov     qword [calc_buffer_useconds], r10
+        mov     qword [calc_buffer_useconds], r10       ; save usec in DRAM buffer
 
         ; calculate sec diff
         mov     r10, qword [calc_buffer_timeval]
@@ -409,52 +416,57 @@ usec_not_negative:
         shr     r10, 32
         mov     edx, r10d
         mov     r11, 60
-        div     r11d            ; EDX & EAX / r11 = EAX and EDX
-        mov     byte [calc_buffer_seconds], dl
-        mov     r10, rax         ; quotient - left min
+        div     r11d                                    ; EDX & EAX / r11 = EAX and EDX
+        mov     byte [calc_buffer_seconds], dl          ; save seconds in DRAM buffer
+        mov     r10, rax                                ; quotient - left min
 
         ; calculate hr from min
         mov     eax, r10d
         shr     r10, 32
         mov     edx, r10d
         mov     r11, 60
-        div     r11d            ; EDX & EAX / r11 = EAX and EDX
-        mov     byte [calc_buffer_minutes], dl
-        mov     r10, rax         ; quotient - left min
+        div     r11d                                    ; EDX & EAX / r11 = EAX and EDX
+        mov     byte [calc_buffer_minutes], dl          ; save minutes in DRAM buffer
+        mov     r10, rax                                ; quotient - left min
 
         ; calculate d from hr
         mov     eax, r10d
         shr     r10, 32
         mov     edx, r10d
         mov     r11, 24
-        div     r11d            ; EDX & EAX / r11 = EAX and EDX
-        mov     byte [calc_buffer_hours], dl
-        mov     dword [calc_buffer_days], eax     ; quotient - left days
+        div     r11d                                    ; EDX & EAX / r11 = EAX and EDX
+        mov     byte [calc_buffer_hours], dl            ; save hours in DRAM buffer
+        mov     dword [calc_buffer_days], eax           ; save days in DRAM buffer
 
-        ; TODO ausgabe hier
-        ; timestamp vorbereiten
-        
+;-----------------------------
+; End: calculation
+;-----------------------------
+
+;----------------------------------
+; Start: convert timestamp to ASCII
+;----------------------------------
+        ; setup / clear for sec to ASCII
         xor     rcx, rcx          ; clear counter
         xor     rax, rax          ; clear for div
         mov     rcx, 18           ; counter = 18 -> last position for sec
 
 setup_timveal_sec:
-        ; convert sec to ASCII
+        ; start: convert sec to ASCII
         mov     edx, dword [calc_buffer_timeval+4]
         mov     eax, dword [calc_buffer_timeval]
         mov     r11, 10
-        div     r11d                            ; seconds / 10 = seconds and remainder 
+        div     r11d                            ; seconds (edx & eax) / 10 (r11d) = seconds (eax) and remainder (edx)
         add     rdx, '0'                        ; convert remainder to ASCII
-        lea     r11, [out_str+rcx-1]
+        lea     r11, [out_str+rcx-1]            ; write ASCII chars from end to start
         mov     byte [r11], dl                  ; write char to output string
 
-        mov     qword [calc_buffer_timeval], rax
+        mov     qword [calc_buffer_timeval], rax ; set the new seconds for next interation
         
         dec     cl
         cmp     cl, 8                           ; stop when the start of sec is reached in the string
         jg      setup_timveal_sec
 
-        ; convert usec to ASCII
+        ; start: convert usec to ASCII
         ; get list[index + 1] for usec
         mov     rdi, calc_buffer_timeval
         mov     rsi, r12
@@ -469,27 +481,32 @@ setup_timveal_usec:
         mov     edx, dword [calc_buffer_timeval+12]
         mov     eax, dword [calc_buffer_timeval+8]
         mov     r11, 10
-        div     r11d                            ; seconds / 10 = seconds and remainder 
-        add     rdx, '0'                        ; convert remainder to ASCII
-        lea     r11, [out_str+rcx-1]
-        mov     byte [r11], dl                  ; write char to output string
+        div     r11d                    ; useconds (edx & eax) / 10 (r11d) = useconds (eax) and remainder (edx)
+        add     rdx, '0'                ; convert remainder to ASCII
+        lea     r11, [out_str+rcx-1]    ; write ASCII chars from end to start
+        mov     byte [r11], dl          ; write char to output string
 
-        mov     qword [calc_buffer_timeval+8], rax
+        mov     qword [calc_buffer_timeval+8], rax      ; set the new useconds for next interation
         
         dec     cl
-        cmp     cl, 19                          ; stop when the dot is reached in the string
+        cmp     cl, 19                  ; stop when the dot is reached in the string
         jg      setup_timveal_usec
 
+;----------------------------------
+; End: convert timestamp to ASCII
+;----------------------------------
 
+;----------------------------------
+; Start: convert the calcualted timediff values to ASCII
+;----------------------------------
         ; r14 = 0: string_index
         xor     r14, r14        ; r14 = string_index = 0
-        
-        ; calc_buffer_days == 0
-        ;       -> skip
+
+        ; no output of days if calc_buffer_days == 0
         cmp     dword [calc_buffer_days], 0
         je      skip_days
-        
-        ; calc_buffer_days in string umwandlen
+
+        ; convert calc_buffer_days in string
         xor     rcx, rcx                ; clear counter
         xor     rax, rax                ; clear for div
         xor     rdx, rdx                ; clear for div
@@ -500,9 +517,9 @@ setup_days:
         xor     edx, edx
         mov     eax, edi
         mov     r11, 10
-        div     r11d                            ; seconds / 10 = seconds and remainder 
+        div     r11d                            ; days (edx & eax) / 10 (r11d) = days (eax) and remainder (edx)
         add     rdx, '0'                        ; convert remainder to ASCII
-        lea     r11, [days_str_buffer+rcx-1]
+        lea     r11, [days_str_buffer+rcx-1]    ; write ASCII chars from end to start
         mov     byte [r11], dl                  ; write char to output string buffer
 
         mov     edi, eax                        ; set new value for next iteration
@@ -514,11 +531,11 @@ setup_days:
         jmp     zero_char
 
 not_zero_char:
-        xor     r15,r15                         ; ...reset the offset
+        xor     r15, r15                        ; reset the offset
         
 zero_char:
         dec     cl
-        cmp     cl, 0                           ; stop when the dot is reached in the string
+        cmp     cl, 0                           ; stop when the border for the days are reached
         jg      setup_days
 
         ; write number to string
@@ -526,7 +543,6 @@ zero_char:
         mov     qword [timediff], r11           ; char numbers to timediff
         sub     r14, r15                        ; string_index = string_index - offset
 
-        ; "______ days, "
         cmp     dword [calc_buffer_days], 1     ; check for multiple days or single day
         jg      days_output
 
@@ -537,20 +553,12 @@ zero_char:
         add     r14, 6                          ; string_index += 6
         jmp     skip_days
 
+        ; add " days "
 days_output:
         lea     r11, [timediff+r14]
-        mov     rdx, qword [days]               ; save string " day, " to rdx
+        mov     rdx, qword [days]               ; save string " days, " to rdx
         mov     qword [r11], rdx                ; save string " days, " to timediff
         add     r14, 7                          ; string_index += 7
-
-        ; setup day(s)
-        ; calc_buffer_days > 1
-        ;       -> calc_buffer_days + " days" in out_str speichern
-        ;       -> r14 entsprechen hinzugefügten chars hochzählen
-
-        ; calc_buffer_days == 1
-        ;       -> calc_buffer_days + " day" in out_str speichern
-        ;       -> r14 entsprechen hinzugefügten chars hochzählen
 
 skip_days:
         ; setup hours
@@ -562,26 +570,22 @@ skip_days:
 setup_hours:
         mov     al, byte [calc_buffer_hours]
         mov     r11, 10
-        div     r11b                            ; seconds / 10 = seconds and remainder 
+        div     r11b                            ; hours (al) / 10 (r11b) = hours (al) and remainder (ah)
         add     ah, '0'                         ; convert remainder to ASCII
-        lea     r11, [timediff+rcx-1]
+        lea     r11, [timediff+rcx-1]           ; write ASCII chars from end to start
 
-        mov     byte [calc_buffer_hours], al    ; write quotient to AL
+        mov     byte [calc_buffer_hours], al    ; write quotient to al
 
         shr     ax, 8
         mov     byte [r11], al                  ; write char to output string
 
         dec     cl
-        cmp     rcx, r14                         ; stop after the 2 hour digits
+        cmp     rcx, r14                        ; stop after the 2 hour digits
         jg      setup_hours
         add     r14, 2                          ; inc string_index for the 2 houres ASCII
 
         mov     byte [timediff+r14], ':'        ; add hh:mm seperator
         inc     r14                             ; inc string_index beacuse of the ":"
-        
-        ; calc_buffer_hours in string umwandlen
-        ; calc_buffer_hours + ":" in out_str speichern
-        ; rcx entsprechen hinzugefügten chars hochzählen
 
         ; setup minutes
         xor     rcx, rcx          ; clear counter
@@ -592,25 +596,22 @@ setup_hours:
 setup_minutes:
         mov     al, byte [calc_buffer_minutes]
         mov     r11, 10
-        div     r11b                            ; seconds / 10 = seconds and remainder 
+        div     r11b                            ; minutes (al) / 10 (r11b) = minutes (al) and remainder (ah)
         add     ah, '0'                         ; convert remainder to ASCII
-        lea     r11, [timediff+rcx-1]
+        lea     r11, [timediff+rcx-1]           ; write ASCII chars from end to start
 
-        mov     byte [calc_buffer_minutes], al    ; write quotient to AL
+        mov     byte [calc_buffer_minutes], al  ; write quotient to al
 
         shr     ax, 8
         mov     byte [r11], al                  ; write char to output string
 
         dec     cl
-        cmp     rcx, r14                         ; stop after the 2 hour digits
+        cmp     rcx, r14                        ; stop after the 2 min digits
         jg      setup_minutes
-        add     r14, 2                          ; inc string_index for the 2 houres ASCII
+        add     r14, 2                          ; inc string_index for the 2 min ASCII
 
         mov     byte [timediff+r14], ':'        ; add mm:ss seperator
         inc     r14                             ; inc string_index beacuse of the ":"
-        ; calc_buffer_minutes in string umwandlen
-        ; calc_buffer_minutes + ":" in out_str speichern
-        ; rcx entsprechen hinzugefügten chars hochzählen
 
         ; setup seconds
         xor     rcx, rcx          ; clear counter
@@ -621,26 +622,22 @@ setup_minutes:
 setup_seconds:
         mov     al, byte [calc_buffer_seconds]
         mov     r11, 10
-        div     r11b                            ; seconds / 10 = seconds and remainder 
+        div     r11b                            ; seconds (al) / 10 (r11b) = seconds (al) and remainder (ah)
         add     ah, '0'                         ; convert remainder to ASCII
-        lea     r11, [timediff+rcx-1]
+        lea     r11, [timediff+rcx-1]           ; write ASCII chars from end to start
 
-        mov     byte [calc_buffer_seconds], al    ; write quotient to AL
+        mov     byte [calc_buffer_seconds], al  ; write quotient to al
 
         shr     ax, 8
         mov     byte [r11], al                  ; write char to output string
 
         dec     cl
-        cmp     rcx, r14                         ; stop after the 2 hour digits
+        cmp     rcx, r14                        ; stop after the 2 sec digits
         jg      setup_seconds
-        add     r14, 2                          ; inc string_index for the 2 houres ASCII
+        add     r14, 2                          ; inc string_index for the 2 sec ASCII
 
         mov     byte [timediff+r14], '.'        ; add ss:us seperator
         inc     r14                             ; inc string_index beacuse of the ":"
-        ; calc_buffer_seconds in string umwandlen
-        ; calc_buffer_seconds + ":" in out_str speichern
-        ; rcx entsprechen hinzugefügten chars hochzählen
-
         ; setup useconds
         xor     rcx, rcx          ; clear counter
         xor     rax, rax          ; clear for div
@@ -651,24 +648,21 @@ setup_useconds:
         xor     edx, edx
         mov     eax, [calc_buffer_useconds]
         mov     r11, 10
-        div     r11d                                    ; seconds / 10 = seconds and remainder 
+        div     r11d                                    ; useconds (edx) / 10 (eax) = useconds (eax) and remainder (rdx)
         add     rdx, '0'                                ; convert remainder to ASCII
-        lea     r11, [timediff+rcx-1]
+        lea     r11, [timediff+rcx-1]                   ; write ASCII chars from end to start
         mov     byte [r11], dl                          ; write char to output string buffer
 
         mov     dword [calc_buffer_useconds], eax       ; set new value for next iteration
 
         dec     cl
-        cmp     rcx, r14                                ; stop after the 2 hour digits
+        cmp     rcx, r14                                ; stop after the 6 usec digits
         jg      setup_useconds
 
-        ; calc_buffer_useconds in string umwandlen
-        ; calc_buffer_useconds in out_str speichern
-        ; rcx entsprechen hinzugefügten chars hochzählen
-
+        ; print the timestamp and timediff
         SYSCALL_4 SYS_WRITE, FD_STDOUT, out_str, out_str_len
 
-        ; clear timediff
+        ; clear timediff buffer string
         xor     rcx, rcx
         mov     rcx, 27
 start_clear:
@@ -677,57 +671,24 @@ start_clear:
         cmp     rcx, 0
         jg      start_clear
 
-        inc     r12             ; index++
-        cmp     r12,r13         ; check if index < (list_size-1)
+        inc     r12              ; index++
+        cmp     r12, r13         ; check if index < (list_size-1)
         jl      calc_and_print_next
 
-; 1000000000.000000
-; 1234567890.000000
-; 2. Berechnen der Timediff und Ausgabe
-    ; foreach timeval in list
-        ; "=======" ausgeben
-        ; Zahl in ascii convertieren (darauf achten zahlen auszufüllen mit 0er)
-        ; die convertierten zeichen in buffer schreiben
-        ; buffer ausgeben
-        ; timediff berechnen 
-        ; umwandeln in ascii
-        ; ascii in buffer
-        ; buffer ausgeben
-        ; und von vorne
-;
-;Beispiel
-;sec = d0012345678
-;umwandeln in ascii
-;
-;ganze 10 mal
-;
-;sec = (EDX & EAX) / 10 = Ganzzahl (EAX) and Rest (EDX)
-;neues sec = EAX
-;hier umwandlung von EDX in ascii
-;in buffer schreiben - Achtung wir lesen von 1er nach 1milliarder 
-;
-;und von vorne
-;
-
-; =======
-
-; 1.5                   = 0000000001.500000
-; 1000000000.0
-; 1234567890.000000
-; 1483225200.000000
-; 1491861600.000
-; 1500000000.000000
-; 1502529000.000001
-; 1502529001.000000
-; 1502530860.999999
-; 1502617201.999998
-
+;----------------------------------
+; End: convert the calcualted timediff values to ASCII
+;----------------------------------
+        jmp     exit            ; exit with success
 
 not_number:
-        nop
+        ; print not_number_error_str
+        SYSCALL_4 SYS_WRITE, FD_STDOUT, not_number_error_str, not_number_error_str_len
+        jmp     exit.exit_failure       ; exit with error status code
 
 not_sorted:
-        nop
+        ; print not_sorted_error_str
+        SYSCALL_4 SYS_WRITE, FD_STDOUT, not_sorted_error_str, not_sorted_error_str_len
+        jmp     exit.exit_failure       ; exit with error status code
 
 ; Need to restore regestries
 pop     r15             ; restore r15
@@ -738,10 +699,9 @@ pop     r12             ; restore r12
         ;-----------------------------------------------------------
         ; call system exit and return to operating system / shell
         ;-----------------------------------------------------------
+exit:
 .exit:  SYSCALL_2 SYS_EXIT, 0
+.exit_failure: SYSCALL_2 SYS_EXIT, -1
         ;-----------------------------------------------------------
         ; END OF PROGRAM
         ;-----------------------------------------------------------
-
-exit_failure:
-.exit:  SYSCALL_2 SYS_EXIT, -1
