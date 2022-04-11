@@ -76,7 +76,7 @@ list_is_sorted:
         xor     rcx, rcx                ; set counter rcx to 0
 
         cmp     word [counter],0        ; check if list size is 0
-        je      return_sorted           ; return false
+        je      return_sorted_false     ; return false
 
         cmp     word [counter],1        ; check if list size is 1
         je      return_sorted_true      ; return true
@@ -86,29 +86,6 @@ list_is_sorted:
         shl     rdx, 4                  ; list size * 16 -> max physical address
 
 loop_start_sorted:
-
-        ; i = rcx
-        ; counter*16 = rdx
-        ; list + i == list + i + 16 Byte -> Sekunden vergleichen
-        ; wenn gleich dann
-        ;       list + i + 8 Byte == list + i + 24 Byte -> usec vergleichen
-                ; wenn gleich dann
-                ;       passt
-                ; wenn rechts kleiner als links
-                ;       return false
-                ; wenn links kleiner als rechts
-                ;       passt
-        ; wenn rechts kleiner als links
-;               return false
-        ; wenn links kleiner als rechts
-        ;       passt
-        ; i += 16 Byte
-        ; check if i == counter * 16
-        ; wenn nein
-                ; loop start
-        ; wenn ja
-                ; return true
-
         xor     r10, r10
         xor     r11, r11
 
@@ -117,7 +94,7 @@ loop_start_sorted:
 
         cmp     r10, r11                ; if links & rechts...
         je      check_usec              ; links == rechts
-        jg      return_sorted           ; links > rechts => false
+        jg      return_sorted_false     ; links > rechts => false
 
 callback_from_check_usec:
         add     rcx, 0x10               ; add 16 to the index
@@ -127,22 +104,22 @@ callback_from_check_usec:
         jmp     loop_start_sorted       ; go to loop start
 
 check_usec:
-        xor     r10, r10
-        xor     r11, r11
+        xor     r10, r10                ; clear r10
+        xor     r11, r11                ; celar r11
 
-        mov     r10, [list + rcx + 0x8] ; get tv_usec at list[rcx]
-        mov     r11, [list + rcx + 0x18]; get tv_usec at list[rcx+1]
+        mov     r10, [list + rcx + 0x8]         ; get tv_usec at list[rcx]
+        mov     r11, [list + rcx + 0x18]        ; get tv_usec at list[rcx+1]
 
-        cmp     r10, r11                ; if links & rechts...
-        jg      return_sorted           ; links > rechts => false
+        cmp     r10, r11                        ; if links & rechts...
+        jg      return_sorted_false             ; links > rechts => false
 
         jmp      callback_from_check_usec       ; return to loop
 
 
 return_sorted_true:
-        add     rax, 1        ;set return value to true
+        add     rax, 1                  ; set return value to true
 
-return_sorted:
+return_sorted_false:
         mov     rsp,rbp
         pop     rbp
         ret
@@ -168,8 +145,8 @@ list_add:
 
         add     rcx, list               ; addr + offset (counter * 16 Byte)
 
-        mov    [rcx], r10               ; tv_sec in list[counter*16]
-        mov    [rcx + 0x8], r11         ; tv_usec in list[counter*16+8]
+        mov     [rcx], r10              ; tv_sec in list[counter*16]
+        mov     [rcx + 0x8], r11        ; tv_usec in list[counter*16+8]
 
         movzx   rax, word [counter]     ; Return index of the added timestamp
         add     word [counter], 1       ; Add 1 to the counter of added timestamps
@@ -187,9 +164,10 @@ list_find:
         push    rbp
         mov     rbp,rsp
 
+        ; binary search to find a timeval in the list
         mov     rax, 0xffffffff         ; return -1 on failure
 
-        cmp     word [counter],0        ; check if counter == 0
+        cmp     word [counter], 0       ; check if counter == 0
         je      return_find             ; return -1 -> object not found
 
         xor     r10, r10                ; r10 is the left edge index = 0
@@ -258,26 +236,26 @@ list_get:
         ; *tv is in rdi
         ; idx is in rsi
 
-        xor     rax,rax         ; return false on failure
+        xor     rax, rax                ; return false on failure
 
-        cmp     word [counter],0     ; check if counter == 0
-        je      return_get      ; return false
+        cmp     word [counter], 0       ; check if counter == 0
+        je      return_get              ; return false
 
-        cmp     si, word [counter]  ; check if index >= counter
-        jge     return_get      ; return false
+        cmp     si, word [counter]      ; check if index >= counter
+        jge     return_get              ; return false
         
-        mov     rcx, rsi        ; get counter value in rcx
-        shl     rcx, 4          ; rcx * 16 Bytes == rcx << 4
+        mov     rcx, rsi                ; get counter value in rcx
+        shl     rcx, 4                  ; rcx * 16 Bytes == rcx << 4
 
-        add     rcx, list       ; addr + offset (counter * 16 Byte)
-        mov     r10, [rcx]      ; r10 = tv_sec
-        mov     [rdi], r10      ; rdi = r10 (tv_sec)
+        add     rcx, list               ; addr + offset (counter * 16 Byte)
+        mov     r10, [rcx]              ; r10 = tv_sec
+        mov     [rdi], r10              ; rdi = r10 (tv_sec)
 
-        xor     r10,r10                 ; clear r10
+        xor     r10, r10                ; clear r10
         mov     r10, [rcx + 0x8]        ; r10 = tv_usec
         mov     [rdi + 0x8], r10        ; rdi+0x8 = r10 (tv_usec)
 
-        add     rax,1           ; return true on success
+        add     rax, 1                  ; return true on success
 
 return_get:
         mov     rsp,rbp
