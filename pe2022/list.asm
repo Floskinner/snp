@@ -26,7 +26,7 @@ SECTION .bss
 ; => 8 Byte RESQ * 20.000 = 160.000 Byte
 list    resq 20000
 
-; Maximal 10.000 Stück -> 16 Bit (reichen theoretisch 14 Bit - gibts nicht)
+; max 10.000 timevals -> at least 14 Bit -> 16 Bit for registry compatibility
 counter resw 1
 
 ;-----------------------------------------------------------------------------
@@ -57,7 +57,7 @@ list_size:
         push    rbp
         mov     rbp,rsp
 
-        movzx   rax, word [counter]
+        movzx   rax, word [counter]     ; set counter to return value
 
         mov     rsp,rbp
         pop     rbp
@@ -75,15 +75,15 @@ list_is_sorted:
         xor     rax,rax                 ; set return value to false
         xor     rcx, rcx                ; set counter rcx to 0
 
-        cmp     word [counter],0        ; check if counter == 0
+        cmp     word [counter],0        ; check if list size is 0
         je      return_sorted           ; return false
 
-        cmp     word [counter],1        ; check if counter == 1
+        cmp     word [counter],1        ; check if list size is 1
         je      return_sorted_true      ; return true
 
-        movzx   rdx, word [counter]     ; save counter to rdx
-        sub     rdx, 1                  ; rdx = counter - 1
-        shl     rdx, 4                  ; counter * 16 -> max physical address
+        movzx   rdx, word [counter]     ; save list size to rdx
+        sub     rdx, 1                  ; rdx = list size - 1
+        shl     rdx, 4                  ; list size * 16 -> max physical address
 
 loop_start_sorted:
 
@@ -112,8 +112,8 @@ loop_start_sorted:
         xor     r10, r10
         xor     r11, r11
 
-        mov     r10, [list + rcx]       ; get tv_sec at list[rcx]
-        mov     r11, [list + rcx + 0x10]; get tv_sec at list[rcx+1]
+        mov     r10, [list + rcx]               ; get tv_sec at list[rcx]
+        mov     r11, [list + rcx + 0x10]        ; get tv_sec at list[rcx+1]
 
         cmp     r10, r11                ; if links & rechts...
         je      check_usec              ; links == rechts
@@ -187,30 +187,6 @@ list_find:
         push    rbp
         mov     rbp,rsp
 
-        ; your code goes here
-
-        ; param:
-        ;       list     ( Liste, in der zu suchen ist )
-        ;       r10      = 0
-        ;       r11      = counter - 1
-        ;       rdi      ( gesucht, wird als *tv uebergeben )
-        ;       rcx      ( Mitte -> aktueller Suchpunkt )
-
-        ; startloop:
-        ; rcx = r10 + ( r11 - r10 ) / 2
-        ; vergleich:    list[m] ?? rdi
-        ; ==:
-        ;       return m
-        ; <:
-        ;       r10 = rcx + 1
-        ; >:
-        ;       r11 = rcx - 1
-        ; vergleich:    a ?? b
-        ; <=:
-        ;       loop
-        ; else:
-        ;       return -1
-
         mov     rax, 0xffffffff         ; return -1 on failure
 
         cmp     word [counter],0        ; check if counter == 0
@@ -279,8 +255,8 @@ list_get:
         push    rbp
         mov     rbp,rsp
 
-        ; *tv ist in rdi
-        ; idx in rsi
+        ; *tv is in rdi
+        ; idx is in rsi
 
         xor     rax,rax         ; return false on failure
 
