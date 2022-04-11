@@ -81,7 +81,7 @@ out_str:        db "======="
                 db CHR_LF
 next_timestamp: db "__________.______"
                 db CHR_LF
-timediff:       times 28 db "_"
+timediff:       times 28 db 0
                 db CHR_LF
 out_str_len equ $-out_str
 
@@ -284,7 +284,7 @@ read_finished:
 ; r13 = max loop interation: size of the list - 1
         call    list_size
         mov     r13, rax                ; get size of list
-        mov     r12, 0                  ; get size of list to count
+        mov     r12, 0                  ; index of the current timestamp
         cmp     r13, 1                  ; check if list size <= 1
         jle     exit_failure
 
@@ -392,15 +392,16 @@ calc_and_print_next:
         sbb     r10, qword [timeval_buffer]             ; list[i+1] - list[i]
 
         ; convert negative usecs to correct value
-        ; mov     r10, qword [calc_buffer_useconds]
-        ; cmp     r10, 0
-        ; jge     usec_not_negative
-        ; xor     r10, 0xffffffffffffffff
-        ; inc     r10
-        ; mov     r11, 0xF4240
-        ; sub     r11, r10
-        ; mov     qword [calc_buffer_useconds], r11
-        ; [calc_buffer_useconds] = 1 000 000 - Zweierkomplement von r10
+        xor     rsi, rsi
+        mov     rsi, qword [calc_buffer_useconds]
+        cmp     rsi, 0
+        jge     usec_not_negative
+        xor     rsi, 0xffffffffffffffff
+        inc     rsi
+        mov     r11, 0xF4240
+        sub     r11, rsi
+        mov     qword [calc_buffer_useconds], r11
+        ; [calc_buffer_useconds] = 1 000 000 - Zweierkomplement von rsi
 
 usec_not_negative:
         ; calculate min from sec
@@ -485,7 +486,7 @@ setup_timveal_usec:
         
         ; calc_buffer_days == 0
         ;       -> skip
-        cmp     qword [calc_buffer_days], 0
+        cmp     dword [calc_buffer_days], 0
         je      skip_days
         
         ; calc_buffer_days in string umwandlen
@@ -555,15 +556,15 @@ skip_days:
         ; setup hours
         xor     rcx, rcx          ; clear counter
         xor     rax, rax          ; clear for div
-        mov     rcx, r14          ; counter = 2
-        add     rcx, 1
+        mov     rcx, r14          ; counter = string_index
+        add     rcx, 2
         
 setup_hours:
         mov     al, byte [calc_buffer_hours]
         mov     r11, 10
         div     r11b                            ; seconds / 10 = seconds and remainder 
         add     ah, '0'                         ; convert remainder to ASCII
-        lea     r11, [timediff+rcx]
+        lea     r11, [timediff+rcx-1]
 
         mov     byte [calc_buffer_hours], al    ; write quotient to AL
 
@@ -572,7 +573,7 @@ setup_hours:
 
         dec     cl
         cmp     rcx, r14                         ; stop after the 2 hour digits
-        jge     setup_hours
+        jg      setup_hours
         add     r14, 2                          ; inc string_index for the 2 houres ASCII
 
         mov     byte [timediff+r14], ':'        ; add hh:mm seperator
@@ -586,14 +587,14 @@ setup_hours:
         xor     rcx, rcx          ; clear counter
         xor     rax, rax          ; clear for div
         mov     rcx, r14          ; counter = 2
-        add     rcx, 1
+        add     rcx, 2
         
 setup_minutes:
         mov     al, byte [calc_buffer_minutes]
         mov     r11, 10
         div     r11b                            ; seconds / 10 = seconds and remainder 
         add     ah, '0'                         ; convert remainder to ASCII
-        lea     r11, [timediff+rcx]
+        lea     r11, [timediff+rcx-1]
 
         mov     byte [calc_buffer_minutes], al    ; write quotient to AL
 
@@ -602,7 +603,7 @@ setup_minutes:
 
         dec     cl
         cmp     rcx, r14                         ; stop after the 2 hour digits
-        jge     setup_minutes
+        jg      setup_minutes
         add     r14, 2                          ; inc string_index for the 2 houres ASCII
 
         mov     byte [timediff+r14], ':'        ; add mm:ss seperator
@@ -615,14 +616,14 @@ setup_minutes:
         xor     rcx, rcx          ; clear counter
         xor     rax, rax          ; clear for div
         mov     rcx, r14          ; counter = 2
-        add     rcx, 1
+        add     rcx, 2
         
 setup_seconds:
         mov     al, byte [calc_buffer_seconds]
         mov     r11, 10
         div     r11b                            ; seconds / 10 = seconds and remainder 
         add     ah, '0'                         ; convert remainder to ASCII
-        lea     r11, [timediff+rcx]
+        lea     r11, [timediff+rcx-1]
 
         mov     byte [calc_buffer_seconds], al    ; write quotient to AL
 
@@ -631,7 +632,7 @@ setup_seconds:
 
         dec     cl
         cmp     rcx, r14                         ; stop after the 2 hour digits
-        jge     setup_seconds
+        jg      setup_seconds
         add     r14, 2                          ; inc string_index for the 2 houres ASCII
 
         mov     byte [timediff+r14], '.'        ; add ss:us seperator
@@ -644,7 +645,7 @@ setup_seconds:
         xor     rcx, rcx          ; clear counter
         xor     rax, rax          ; clear for div
         mov     rcx, r14          ; counter = 2
-        add     rcx, 5
+        add     rcx, 6
         
 setup_useconds:
         xor     edx, edx
@@ -652,14 +653,14 @@ setup_useconds:
         mov     r11, 10
         div     r11d                                    ; seconds / 10 = seconds and remainder 
         add     rdx, '0'                                ; convert remainder to ASCII
-        lea     r11, [timediff+rcx]
+        lea     r11, [timediff+rcx-1]
         mov     byte [r11], dl                          ; write char to output string buffer
 
         mov     dword [calc_buffer_useconds], eax       ; set new value for next iteration
 
         dec     cl
         cmp     rcx, r14                                ; stop after the 2 hour digits
-        jge     setup_useconds
+        jg      setup_useconds
 
         ; calc_buffer_useconds in string umwandlen
         ; calc_buffer_useconds in out_str speichern
@@ -671,7 +672,7 @@ setup_useconds:
         xor     rcx, rcx
         mov     rcx, 27
 start_clear:
-        mov     byte [timediff+rcx], '_'        ; clear timediff for next calculation
+        mov     byte [timediff+rcx], 0        ; clear timediff for next calculation
         dec     rcx
         cmp     rcx, 0
         jg      start_clear
