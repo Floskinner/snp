@@ -42,6 +42,8 @@ extern list_get
 %define MAX_SECOND_SIZE       1 ; max 59 -> 6 Bit -> 1 Byte
 %define MAX_USECOND_SIZE      4 ; max 999999 -> 20 Bit -> min 3 Byte
 
+%define MAX_DAY_STR_SIZE     11 ; max 999999 -> 6 Byte numbers (ASCII) + max 5 Byte offset
+
 ;-----------------------------------------------------------------------------
 ; Section BSS
 ;-----------------------------------------------------------------------------
@@ -59,10 +61,17 @@ calc_buffer_minutes     resb MAX_MINUTE_SIZE
 calc_buffer_seconds     resb MAX_SECOND_SIZE
 calc_buffer_useconds    resb MAX_USECOND_SIZE
 
+days_str_buffer         resb MAX_DAY_STR_SIZE
+
 ;-----------------------------------------------------------------------------
 ; Section DATA
 ;-----------------------------------------------------------------------------
 SECTION .data
+
+day:
+                db " day, __"
+days:           
+                db " days, _"
 
 out_timestr:    db "__________.______"
                 db CHR_LF
@@ -72,7 +81,7 @@ out_str:        db "======="
                 db CHR_LF
 next_timestamp: db "__________.______"
                 db CHR_LF
-timediff:       times 28 db ""
+timediff:       times 28 db "_"
                 db CHR_LF
 out_str_len equ $-out_str
 
@@ -94,6 +103,8 @@ _start:
         nop
         push    r12     ; save r12
         push    r13     ; save r13
+        push    r14     ; save r14
+        push    r15     ; save r15
 
         call    list_init       ; init list for the timeval
 
@@ -270,12 +281,14 @@ read_finished:
 
 ; 1. Checken ob Liste sortiert ist -> ansonsten fehler
 ; r12 = index: index of the current timestamp
-; r13 = counter: size of the list and used to leave the loop then all timestamps are printed
+; r13 = max loop interation: size of the list - 1
         call    list_size
         mov     r13, rax                ; get size of list
         mov     r12, 0                  ; get size of list to count
         cmp     r13, 1                  ; check if list size <= 1
         jle     exit_failure
+
+        dec     r13                     ; dec list_size to exit the loop
 
         call    list_is_sorted          ; check if list is sorted
         test    rax, rax
@@ -344,7 +357,7 @@ setup_first_timveal_usec:
         mov     qword [timeval_buffer+8], rax
         
         dec     cl
-        cmp     cl, 11                          ; stop then the dot is reached in the string
+        cmp     cl, 11                          ; stop when the dot is reached in the string
         jg      setup_first_timveal_usec
 
         
@@ -373,11 +386,23 @@ calc_and_print_next:
         mov     r10, qword [calc_buffer_timeval+8]
         sub     r10, qword [timeval_buffer+8]           ; list[i+1] - list[i]
         mov     qword [calc_buffer_useconds], r10
-        
+
         ; calculate sec diff
         mov     r10, qword [calc_buffer_timeval]
         sbb     r10, qword [timeval_buffer]             ; list[i+1] - list[i]
 
+        ; convert negative usecs to correct value
+        ; mov     r10, qword [calc_buffer_useconds]
+        ; cmp     r10, 0
+        ; jge     usec_not_negative
+        ; xor     r10, 0xffffffffffffffff
+        ; inc     r10
+        ; mov     r11, 0xF4240
+        ; sub     r11, r10
+        ; mov     qword [calc_buffer_useconds], r11
+        ; [calc_buffer_useconds] = 1 000 000 - Zweierkomplement von r10
+
+usec_not_negative:
         ; calculate min from sec
         mov     eax, r10d
         shr     r10, 32
@@ -403,7 +428,7 @@ calc_and_print_next:
         mov     r11, 24
         div     r11d            ; EDX & EAX / r11 = EAX and EDX
         mov     byte [calc_buffer_hours], dl
-        mov     dword [calc_buffer_days], eax     ; quotient - left d
+        mov     dword [calc_buffer_days], eax     ; quotient - left days
 
         ; TODO ausgabe hier
         ; timestamp vorbereiten
@@ -425,9 +450,10 @@ setup_timveal_sec:
         mov     qword [calc_buffer_timeval], rax
         
         dec     cl
-        cmp     cl, 8                           ; stop then the start of sec is reached in the string
+        cmp     cl, 8                           ; stop when the start of sec is reached in the string
         jg      setup_timveal_sec
 
+        ; convert usec to ASCII
         ; get list[index + 1] for usec
         mov     rdi, calc_buffer_timeval
         mov     rsi, r12
@@ -450,16 +476,209 @@ setup_timveal_usec:
         mov     qword [calc_buffer_timeval+8], rax
         
         dec     cl
-        cmp     cl, 19                          ; stop then the dot is reached in the string
+        cmp     cl, 19                          ; stop when the dot is reached in the string
         jg      setup_timveal_usec
 
+
+        ; r14 = 0: string_index
+        xor     r14, r14        ; r14 = string_index = 0
         
+        ; calc_buffer_days == 0
+        ;       -> skip
+        cmp     qword [calc_buffer_days], 0
+        je      skip_days
+        
+        ; calc_buffer_days in string umwandlen
+        xor     rcx, rcx                ; clear counter
+        xor     rax, rax                ; clear for div
+        xor     rdx, rdx                ; clear for div
+        xor     r15, r15                ; clear counter for offset
+        mov     rcx, 6                  ; counter = 6 -> last position for the days
+        mov     edi, [calc_buffer_days] ; save current days value for conversion
+setup_days:
+        xor     edx, edx
+        mov     eax, edi
+        mov     r11, 10
+        div     r11d                            ; seconds / 10 = seconds and remainder 
+        add     rdx, '0'                        ; convert remainder to ASCII
+        lea     r11, [days_str_buffer+rcx-1]
+        mov     byte [r11], dl                  ; write char to output string buffer
+
+        mov     edi, eax                        ; set new value for next iteration
+        inc     r14                             ; string_index++
+
+        cmp     dl, '0'                         ; check if char == '0'
+        jg      not_zero_char                   ; if not reset offset
+        inc     r15                             ; else offset++
+        jmp     zero_char
+
+not_zero_char:
+        xor     r15,r15                         ; ...reset the offset
+        
+zero_char:
+        dec     cl
+        cmp     cl, 0                           ; stop when the dot is reached in the string
+        jg      setup_days
+
+        ; write number to string
+        mov     r11, [days_str_buffer+r15]      ; write char numbers with offset to r11 (003452 -> 3452)
+        mov     qword [timediff], r11           ; char numbers to timediff
+        sub     r14, r15                        ; string_index = string_index - offset
+
+        ; "______ days, "
+        cmp     dword [calc_buffer_days], 1     ; check for multiple days or single day
+        jg      days_output
+
+        ; add " day, "
+        lea     r11, [timediff+r14]
+        mov     rdx, qword [day]                ; save string " day, " to rdx
+        mov     qword [r11], rdx                ; save string " day, " to timediff
+        add     r14, 6                          ; string_index += 6
+        jmp     skip_days
+
+days_output:
+        lea     r11, [timediff+r14]
+        mov     rdx, qword [days]               ; save string " day, " to rdx
+        mov     qword [r11], rdx                ; save string " days, " to timediff
+        add     r14, 7                          ; string_index += 7
+
+        ; setup day(s)
+        ; calc_buffer_days > 1
+        ;       -> calc_buffer_days + " days" in out_str speichern
+        ;       -> r14 entsprechen hinzugefügten chars hochzählen
+
+        ; calc_buffer_days == 1
+        ;       -> calc_buffer_days + " day" in out_str speichern
+        ;       -> r14 entsprechen hinzugefügten chars hochzählen
+
+skip_days:
+        ; setup hours
+        xor     rcx, rcx          ; clear counter
+        xor     rax, rax          ; clear for div
+        mov     rcx, r14          ; counter = 2
+        add     rcx, 1
+        
+setup_hours:
+        mov     al, byte [calc_buffer_hours]
+        mov     r11, 10
+        div     r11b                            ; seconds / 10 = seconds and remainder 
+        add     ah, '0'                         ; convert remainder to ASCII
+        lea     r11, [timediff+rcx]
+
+        mov     byte [calc_buffer_hours], al    ; write quotient to AL
+
+        shr     ax, 8
+        mov     byte [r11], al                  ; write char to output string
+
+        dec     cl
+        cmp     rcx, r14                         ; stop after the 2 hour digits
+        jge     setup_hours
+        add     r14, 2                          ; inc string_index for the 2 houres ASCII
+
+        mov     byte [timediff+r14], ':'        ; add hh:mm seperator
+        inc     r14                             ; inc string_index beacuse of the ":"
+        
+        ; calc_buffer_hours in string umwandlen
+        ; calc_buffer_hours + ":" in out_str speichern
+        ; rcx entsprechen hinzugefügten chars hochzählen
+
+        ; setup minutes
+        xor     rcx, rcx          ; clear counter
+        xor     rax, rax          ; clear for div
+        mov     rcx, r14          ; counter = 2
+        add     rcx, 1
+        
+setup_minutes:
+        mov     al, byte [calc_buffer_minutes]
+        mov     r11, 10
+        div     r11b                            ; seconds / 10 = seconds and remainder 
+        add     ah, '0'                         ; convert remainder to ASCII
+        lea     r11, [timediff+rcx]
+
+        mov     byte [calc_buffer_minutes], al    ; write quotient to AL
+
+        shr     ax, 8
+        mov     byte [r11], al                  ; write char to output string
+
+        dec     cl
+        cmp     rcx, r14                         ; stop after the 2 hour digits
+        jge     setup_minutes
+        add     r14, 2                          ; inc string_index for the 2 houres ASCII
+
+        mov     byte [timediff+r14], ':'        ; add mm:ss seperator
+        inc     r14                             ; inc string_index beacuse of the ":"
+        ; calc_buffer_minutes in string umwandlen
+        ; calc_buffer_minutes + ":" in out_str speichern
+        ; rcx entsprechen hinzugefügten chars hochzählen
+
+        ; setup seconds
+        xor     rcx, rcx          ; clear counter
+        xor     rax, rax          ; clear for div
+        mov     rcx, r14          ; counter = 2
+        add     rcx, 1
+        
+setup_seconds:
+        mov     al, byte [calc_buffer_seconds]
+        mov     r11, 10
+        div     r11b                            ; seconds / 10 = seconds and remainder 
+        add     ah, '0'                         ; convert remainder to ASCII
+        lea     r11, [timediff+rcx]
+
+        mov     byte [calc_buffer_seconds], al    ; write quotient to AL
+
+        shr     ax, 8
+        mov     byte [r11], al                  ; write char to output string
+
+        dec     cl
+        cmp     rcx, r14                         ; stop after the 2 hour digits
+        jge     setup_seconds
+        add     r14, 2                          ; inc string_index for the 2 houres ASCII
+
+        mov     byte [timediff+r14], '.'        ; add ss:us seperator
+        inc     r14                             ; inc string_index beacuse of the ":"
+        ; calc_buffer_seconds in string umwandlen
+        ; calc_buffer_seconds + ":" in out_str speichern
+        ; rcx entsprechen hinzugefügten chars hochzählen
+
+        ; setup useconds
+        xor     rcx, rcx          ; clear counter
+        xor     rax, rax          ; clear for div
+        mov     rcx, r14          ; counter = 2
+        add     rcx, 5
+        
+setup_useconds:
+        xor     edx, edx
+        mov     eax, [calc_buffer_useconds]
+        mov     r11, 10
+        div     r11d                                    ; seconds / 10 = seconds and remainder 
+        add     rdx, '0'                                ; convert remainder to ASCII
+        lea     r11, [timediff+rcx]
+        mov     byte [r11], dl                          ; write char to output string buffer
+
+        mov     dword [calc_buffer_useconds], eax       ; set new value for next iteration
+
+        dec     cl
+        cmp     rcx, r14                                ; stop after the 2 hour digits
+        jge     setup_useconds
+
+        ; calc_buffer_useconds in string umwandlen
+        ; calc_buffer_useconds in out_str speichern
+        ; rcx entsprechen hinzugefügten chars hochzählen
+
         SYSCALL_4 SYS_WRITE, FD_STDOUT, out_str, out_str_len
 
+        ; clear timediff
+        xor     rcx, rcx
+        mov     rcx, 27
+start_clear:
+        mov     byte [timediff+rcx], '_'        ; clear timediff for next calculation
+        dec     rcx
+        cmp     rcx, 0
+        jg      start_clear
+
         inc     r12             ; index++
-        dec     r13             ; loop counter--
-        cmp     r13,1           ; check if loop counter > 1
-        jg      calc_and_print_next
+        cmp     r12,r13         ; check if index < (list_size-1)
+        jl      calc_and_print_next
 
 ; 1000000000.000000
 ; 1234567890.000000
@@ -510,6 +729,8 @@ not_sorted:
         nop
 
 ; Need to restore regestries
+pop     r15             ; restore r15
+pop     r14             ; restore r14
 pop     r13             ; restore r13
 pop     r12             ; restore r12
 
