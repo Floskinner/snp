@@ -1,8 +1,9 @@
-import time
 import random
 
-start_time = 0.0
+start_sec = 0
+start_usec = 0
 
 for _ in range(10_000):
-    print(round(start_time, 6))
-    start_time += random.uniform(0, 1000000)
+    print(f"{start_sec}.{start_usec}")
+    start_sec += random.randint(1, 1_000)
+    start_usec += random.randint(0, 100)
