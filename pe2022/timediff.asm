@@ -95,6 +95,15 @@ not_sorted_error_str:
         db "Die Timestamps sind nicht aufsteigend sortiert!", CHR_LF
 not_sorted_error_str_len equ $-not_sorted_error_str
 
+too_less_timestamps_error_str:
+        db "Die Liste enthält nicht genügend Timestamps!", CHR_LF
+too_less_timestamps_error_str_len equ $-too_less_timestamps_error_str
+
+get_failed_error_str:
+        db "Internal programm error!", CHR_LF,
+        db "Please contact the developers for more information.", CHR_LF
+get_failed_error_str_len equ $-get_failed_error_str
+
 ;-----------------------------------------------------------------------------
 ; SECTION TEXT
 ;-----------------------------------------------------------------------------
@@ -123,11 +132,11 @@ next_string:
         ;-----------------------------------------------------------
         SYSCALL_4 SYS_READ, FD_STDIN, input_buffer, BUFFER_SIZE
         test    rax, rax                ; check system call return value
-        jz      exit.exit_failure       ; exit with error status code if string is empty
+        jz      too_less_timestamps     ; exit with error status code if string is empty
 
         ; rsi: pointer to current character in input_buffer
         lea     rsi, [input_buffer]     ; load pointer to character buffer
-        mov     byte [rsi+rax], 0        ; zero terminate string
+        mov     byte [rsi+rax], 0       ; zero terminate string
 
         xor     rcx, rcx                ; clear rcx
         xor     r13, r13                ; clear r13
@@ -298,7 +307,7 @@ read_finished:
         mov     r13, rax                ; get size of list
         mov     r12, 0                  ; index of the current timestamp
         cmp     r13, 1                  ; check if list size <= 1
-        jle     exit.exit_failure       ; yes -> exit with error status code
+        jle     too_less_timestamps     ; yes -> exit with error status code
 
         dec     r13                     ; dec list_size to exit the loop
 
@@ -313,7 +322,7 @@ read_finished:
         call    list_get
 
         test    rax, rax                ; test if get was successfull
-        jz      exit.exit_failure
+        jz      get_failed
         
         xor     rcx, rcx          ; clear counter
         xor     rax, rax          ; clear for div
@@ -378,7 +387,7 @@ calc_and_print_next:
         call    list_get
 
         test    rax, rax        ; test if get was successfull
-        jz      exit.exit_failure
+        jz      get_failed
 
 ;       get list[i+1] timeval
         mov     rdi, calc_buffer_timeval
@@ -387,7 +396,7 @@ calc_and_print_next:
         call    list_get
 
         test    rax, rax        ; test if get was successfull
-        jz      exit.exit_failure
+        jz      get_failed
 
         ; calculate usec diff
         mov     r10, qword [calc_buffer_timeval+8]
@@ -688,6 +697,16 @@ not_number:
 not_sorted:
         ; print not_sorted_error_str
         SYSCALL_4 SYS_WRITE, FD_STDOUT, not_sorted_error_str, not_sorted_error_str_len
+        jmp     exit.exit_failure       ; exit with error status code
+
+too_less_timestamps:
+        ; print too_less_timestamps_error_str
+        SYSCALL_4 SYS_WRITE, FD_STDOUT, too_less_timestamps_error_str, too_less_timestamps_error_str_len
+        jmp     exit.exit_failure       ; exit with error status code
+
+get_failed:
+        ; print get_failed_error_str
+        SYSCALL_4 SYS_WRITE, FD_STDOUT, get_failed_error_str, get_failed_error_str_len
         jmp     exit.exit_failure       ; exit with error status code
 
 ; Need to restore regestries
