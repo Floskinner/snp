@@ -78,6 +78,9 @@ Mikrosekundenanteil:
 - Es können maximal 10.000 timestamps eingelesen werden.
 - Es müssen mindestens 2 timestmaps eingelesen werden.
 - Die Liste der timestamps muss aufsteigend sortiert sein.
+- Die Maximallänge der gesamten Eingabe darf 180.000 Byte nicht überschreiten.
+  - Es passen 10.000 valide timestamps in diese Größe.
+  - Der Speicher ist jedoch zu klein für 10.000 timestamps mit mehr als 6 Nachkommastellen.
 
 ## Aufteilung der Arbeit
 Das komplette Team hat immer gemeinsam an dem Projekt gearbeitet. Daher kann keine Aufteilung von bestimmten Funktionen zu bestimmten Personen erfolgen.
