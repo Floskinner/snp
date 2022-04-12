@@ -13,9 +13,9 @@ Zum Erstellen der Programme folgenden Code ausführen:
 # tar.gz entpacken
 mkdir snp
 tar -xzvf pe_tit20_felder_herkommer_glaser.tar.gz -C ./snp
-cd snp
 
 # Bauen der Programme
+cd snp/pe2022
 make
 ```
 
